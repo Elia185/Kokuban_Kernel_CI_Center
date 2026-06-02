@@ -1,180 +1,227 @@
-#!/usr/bin/env bash
-set -euo pipefail
+name: Build Kernel
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: 'Select Project'
+        required: true
+        type: choice
+        options:
+          - z5_sm8550
+          - s25_sm8750
+          - s23_sm8550
+          - tabs9_sm8550
+          - s24_sm8650
+          - tabs10_mt6989
+          - z6_sm8650
+          - mi17_sm8850
+      branch:
+        description: 'Git Branch/Tag'
+        required: true
+        default: 'main'
+      ksu_variant:
+        description: 'Build Mode Override'
+        type: choice
+        options:
+          - default
+          - ksun
+          - lkm
+        default: 'default'
+      do_release:
+        description: 'Create Release'
+        type: boolean
+        default: true
+      custom_localversion:
+        description: 'Custom Localversion Override'
+        type: string
+        required: false
+        default: ''
+      ksun_setup_arg:
+        description: 'KSUN setup.sh argument override'
+        type: string
+        required: false
+        default: ''
+      apply_ksun:
+        description: 'Apply KSUN dynamically during build'
+        type: boolean
+        default: true
+      apply_bbrv3:
+        description: 'Apply BBRV3 dynamically during build'
+        type: boolean
+        default: true
+  repository_dispatch:
+    types: [build-kernel]
+  workflow_call:
+    inputs:
+      project:
+        required: true
+        type: string
+      branch:
+        required: true
+        type: string
+      ksu_variant:
+        type: string
+        default: 'default'
+      do_release:
+        type: boolean
+        default: true
+      custom_localversion:
+        type: string
+        default: ''
+      ksun_setup_arg:
+        type: string
+        default: ''
+      apply_ksun:
+        type: boolean
+        default: true
+      apply_bbrv3:
+        type: boolean
+        default: true
 
-SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-CORE_DIR="$SCRIPT_DIR/ci_core_rs"
-CORE_BIN="${KOKUBAN_CORE:-$CORE_DIR/target/release/kokuban_ci_core}"
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      ARTIFACT_DIR: build_artifacts
+    steps:
+      - uses: actions/checkout@v6
 
-usage() {
-  cat <<'EOF'
-Kokuban local CLI
+      - name: Resolve Build Parameters
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            project="${{ github.event.client_payload.project }}"
+            branch="${{ github.event.client_payload.branch }}"
+            variant="default"
+            release="true"
+            custom_localversion=""
+            ksun_setup_arg=""
+            apply_ksun="${{ github.event.client_payload.apply_ksun }}"
+            apply_bbrv3="${{ github.event.client_payload.apply_bbrv3 }}"
+            if [ -z "$apply_ksun" ]; then
+              apply_ksun="true"
+            fi
+            if [ -z "$apply_bbrv3" ]; then
+              apply_bbrv3="true"
+            fi
+          else
+            project="${{ inputs.project }}"
+            branch="${{ inputs.branch }}"
+            variant="${{ inputs.ksu_variant }}"
+            release="${{ inputs.do_release }}"
+            custom_localversion="${{ inputs.custom_localversion }}"
+            ksun_setup_arg="${{ inputs.ksun_setup_arg }}"
+            apply_ksun="${{ inputs.apply_ksun }}"
+            apply_bbrv3="${{ inputs.apply_bbrv3 }}"
+          fi
 
-Usage:
-  ./kokuban list
-  ./kokuban features [project]
-  ./kokuban validate
-  ./kokuban doctor
-  ./kokuban config <show|path|set>
-  ./kokuban cache <status|clean|prune> [...]
-  ./kokuban toolchain checksums [project]
-  ./kokuban preset <list|set|show|remove> [...]
-  ./kokuban run <preset> [extra local options...]
-  ./kokuban plan <project> [branch] [variant] [local options...]
-  ./kokuban build <project> [branch] [variant] [local options...]
-  ./kokuban local [local options...]
-  ./kokuban core [core options...]
+          if [ "$variant" = "default" ] || [ -z "$variant" ]; then
+            resolved_variant="$branch"
+          else
+            resolved_variant="$variant"
+          fi
 
-Common local options:
-  --local-root <dir>    Use a custom cache/workspace root
-  --offline             Use existing local caches only
-  --no-fetch            Do not fetch kernel source updates
-  --clean               Remove untracked kernel source files before building
-  --dry-run             Print the build plan without touching source or caches
-  --force-lock          Remove an existing lock for this project before building
-  --with-susfs          Enable SuSFS (default)
-  --no-susfs            Disable SuSFS
-  --with-bbg            Enable Baseband Guard
-  --no-bbg              Disable Baseband Guard (default)
-EOF
-}
+          safe_artifact_branch=$(printf '%s' "$branch" | sed 's#[^A-Za-z0-9._-]#-#g')
+          artifact_name="${project}-kernel-${safe_artifact_branch}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
-need_command() {
-  command -v "$1" >/dev/null 2>&1
-}
+          {
+            echo "PROJECT=$project"
+            echo "BRANCH_TARGET=$branch"
+            echo "VARIANT_INPUT=$variant"
+            echo "VARIANT=$resolved_variant"
+            echo "DO_RELEASE=$release"
+            echo "CUSTOM_LOCALVERSION=$custom_localversion"
+            echo "KSUN_SETUP_ARG=$ksun_setup_arg"
+            echo "APPLY_KSUN=$apply_ksun"
+            echo "APPLY_BBRV3=$apply_bbrv3"
+            echo "ARTIFACT_NAME=$artifact_name"
+          } >> "$GITHUB_ENV"
 
-bool_value() {
-  local value
-  value="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
-  case "$value" in
-    1|true|yes|on) echo "true" ;;
-    0|false|no|off) echo "false" ;;
-    *)
-      echo "Invalid boolean value: $1" >&2
-      exit 1
-      ;;
-  esac
-}
+      - name: Download CI Core
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          gh release download ci-core-latest -p "kokuban_ci_core"
+          chmod +x kokuban_ci_core
 
-ensure_core() {
-  if [ -n "${KOKUBAN_CORE:-}" ]; then
-    return
-  fi
+      - name: Parse Configuration
+        run: ./kokuban_ci_core parse --project ${{ env.PROJECT }}
 
-  if ! need_command cargo; then
-    echo "cargo is required. Install Rust first: https://rustup.rs/" >&2
-    exit 1
-  fi
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.PROJECT_REPO }}
+          ref: ${{ env.BRANCH_TARGET }}
+          path: kernel_source
+          submodules: recursive
+          token: ${{ secrets.GH_TOKEN }}
 
-  local needs_build=0
-  if [ ! -x "$CORE_BIN" ]; then
-    needs_build=1
-  elif find "$CORE_DIR/src" "$CORE_DIR/Cargo.toml" "$CORE_DIR/Cargo.lock" -newer "$CORE_BIN" -print -quit | grep -q .; then
-    needs_build=1
-  fi
+      - name: Setup sccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          variant: sccache
+          key: kernel-build-shared-${{ env.PROJECT }}
+          max-size: 5G
 
-  if [ "$needs_build" -eq 1 ]; then
-    echo "Building kokuban_ci_core release binary..."
-    cargo build --release --manifest-path "$CORE_DIR/Cargo.toml"
-  fi
-}
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git libncurses5-dev bc bison flex libssl-dev p7zip-full lz4 cpio curl libelf-dev dwarves jq lld pahole libdw-dev
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-core() {
-  ensure_core
-  CI_CENTRAL_ROOT="$SCRIPT_DIR" "$CORE_BIN" "$@"
-}
+      - name: Build and Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          ARGS=(--project ${{ env.PROJECT }} --branch ${{ env.VARIANT }} --do-release ${{ env.DO_RELEASE }})
+          if [ -n "${{ env.CUSTOM_LOCALVERSION }}" ]; then
+            ARGS+=("--custom-localversion=${{ env.CUSTOM_LOCALVERSION }}")
+          fi
+          if [ -n "${{ env.KSUN_SETUP_ARG }}" ]; then
+            ARGS+=("--ksun-setup-arg=${{ env.KSUN_SETUP_ARG }}")
+          fi
+          ARGS+=("--apply-ksun" "${{ env.APPLY_KSUN }}")
+          ARGS+=("--apply-bbrv3" "${{ env.APPLY_BBRV3 }}")
+          ./kokuban_ci_core build "${ARGS[@]}"
 
-normalize_local_args() {
-  local args=()
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --with-susfs|--susfs)
-        args+=(--apply-susfs true)
-        ;;
-      --no-susfs)
-        args+=(--apply-susfs false)
-        ;;
-      --susfs=*|--apply-susfs=*)
-        args+=(--apply-susfs "$(bool_value "${1#*=}")")
-        ;;
-      --apply-susfs)
-        args+=(--apply-susfs "$(bool_value "${2:?Missing value for --apply-susfs}")")
-        shift
-        ;;
-      --with-bbg|--bbg)
-        args+=(--apply-bbg true)
-        ;;
-      --no-bbg)
-        args+=(--apply-bbg false)
-        ;;
-      --bbg=*|--apply-bbg=*)
-        args+=(--apply-bbg "$(bool_value "${1#*=}")")
-        ;;
-      --apply-bbg)
-        args+=(--apply-bbg "$(bool_value "${2:?Missing value for --apply-bbg}")")
-        shift
-        ;;
-      *)
-        args+=("$1")
-        ;;
-    esac
-    shift
-  done
+      - name: Collect Build Artifacts
+        if: always()
+        id: collect-artifacts
+        run: |
+          if ./kokuban_ci_core collect-artifacts --artifact-dir "$ARTIFACT_DIR"; then
+            :
+          else
+            echo "collect-artifacts command unavailable, falling back to shell collector."
+            mkdir -p "$ARTIFACT_DIR"
+            shopt -s nullglob
 
-  printf '%s\0' "${args[@]}"
-}
+            copied=0
+            for zipball in *.zip; do
+              cp "$zipball" "$ARTIFACT_DIR/"
+              copied=1
+            done
 
-run_local() {
-  local args=()
-  while IFS= read -r -d '' arg; do
-    args+=("$arg")
-  done < <(normalize_local_args "$@")
-  core local "${args[@]}"
-}
+            for extra_file in kernel_source/out/.config kernel_source/out/vmlinux.symvers; do
+              if [ -f "$extra_file" ]; then
+                cp "$extra_file" "$ARTIFACT_DIR/"
+                copied=1
+              fi
+            done
 
-run_build() {
-  if [ "$#" -lt 1 ]; then
-    echo "Missing project." >&2
-    usage >&2
-    exit 1
-  fi
+            if [ "$copied" -eq 1 ]; then
+              echo "has_artifacts=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "has_artifacts=false" >> "$GITHUB_OUTPUT"
+              echo "No build artifacts were produced, skipping upload."
+            fi
+          fi
 
-  local project="$1"
-  local branch="main"
-  local variant="default"
-  shift
-
-  if [ "$#" -gt 0 ] && [[ "$1" != -* ]]; then
-    branch="$1"
-    shift
-  fi
-  if [ "$#" -gt 0 ] && [[ "$1" != -* ]]; then
-    variant="$1"
-    shift
-  fi
-
-  run_local --project "$project" --branch "$branch" --variant "$variant" "$@"
-}
-
-main() {
-  local command="${1:-help}"
-  if [ "$#" -gt 0 ]; then
-    shift
-  fi
-
-  case "$command" in
-    help|-h|--help) usage ;;
-    list|projects) core projects ;;
-    core) core "$@" ;;
-    local) run_local "$@" ;;
-    build) run_build "$@" ;;
-    plan) run_build "$@" --dry-run ;;
-    doctor|features|validate|cache|config|preset|run|toolchain) core "$command" "$@" ;;
-    *)
-      echo "Unknown command: $command" >&2
-      usage >&2
-      exit 1
-      ;;
-  esac
-}
-
-main "$@"
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v7
+        if: always() && steps.collect-artifacts.outputs.has_artifacts == 'true'
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.ARTIFACT_DIR }}
+          include-hidden-files: true
