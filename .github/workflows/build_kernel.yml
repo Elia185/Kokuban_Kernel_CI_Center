@@ -24,7 +24,7 @@ on:
         type: choice
         options:
           - default
-          - resukisu
+          - ksun
           - lkm
         default: 'default'
       do_release:
@@ -36,19 +36,19 @@ on:
         type: string
         required: false
         default: ''
-      resukisu_setup_arg:
-        description: 'ReSukiSU setup.sh argument override'
+      ksun_setup_arg:
+        description: 'KSUN setup.sh argument override'
         type: string
         required: false
         default: ''
-      apply_susfs:
-        description: 'Apply SuSFS dynamically during build'
+      apply_ksun:
+        description: 'Apply KSUN dynamically during build'
         type: boolean
         default: true
-      apply_bbg:
-        description: 'Apply Baseband Guard dynamically during build'
+      apply_bbrv3:
+        description: 'Apply BBRV3 dynamically during build'
         type: boolean
-        default: false
+        default: true
   repository_dispatch:
     types: [build-kernel]
   workflow_call:
@@ -68,15 +68,15 @@ on:
       custom_localversion:
         type: string
         default: ''
-      resukisu_setup_arg:
+      ksun_setup_arg:
         type: string
         default: ''
-      apply_susfs:
+      apply_ksun:
         type: boolean
         default: true
-      apply_bbg:
+      apply_bbrv3:
         type: boolean
-        default: false
+        default: true
 
 jobs:
   build:
@@ -96,14 +96,14 @@ jobs:
             variant="default"
             release="true"
             custom_localversion=""
-            resukisu_setup_arg=""
-            apply_susfs="${{ github.event.client_payload.apply_susfs }}"
-            apply_bbg="${{ github.event.client_payload.apply_bbg }}"
-            if [ -z "$apply_susfs" ]; then
-              apply_susfs="true"
+            ksun_setup_arg=""
+            apply_ksun="${{ github.event.client_payload.apply_ksun }}"
+            apply_bbrv3="${{ github.event.client_payload.apply_bbrv3 }}"
+            if [ -z "$apply_ksun" ]; then
+              apply_ksun="true"
             fi
-            if [ -z "$apply_bbg" ]; then
-              apply_bbg="false"
+            if [ -z "$apply_bbrv3" ]; then
+              apply_bbrv3="true"
             fi
           else
             project="${{ inputs.project }}"
@@ -111,9 +111,9 @@ jobs:
             variant="${{ inputs.ksu_variant }}"
             release="${{ inputs.do_release }}"
             custom_localversion="${{ inputs.custom_localversion }}"
-            resukisu_setup_arg="${{ inputs.resukisu_setup_arg }}"
-            apply_susfs="${{ inputs.apply_susfs }}"
-            apply_bbg="${{ inputs.apply_bbg }}"
+            ksun_setup_arg="${{ inputs.ksun_setup_arg }}"
+            apply_ksun="${{ inputs.apply_ksun }}"
+            apply_bbrv3="${{ inputs.apply_bbrv3 }}"
           fi
 
           if [ "$variant" = "default" ] || [ -z "$variant" ]; then
@@ -132,9 +132,9 @@ jobs:
             echo "VARIANT=$resolved_variant"
             echo "DO_RELEASE=$release"
             echo "CUSTOM_LOCALVERSION=$custom_localversion"
-            echo "RESUKISU_SETUP_ARG=$resukisu_setup_arg"
-            echo "APPLY_SUSFS=$apply_susfs"
-            echo "APPLY_BBG=$apply_bbg"
+            echo "KSUN_SETUP_ARG=$ksun_setup_arg"
+            echo "APPLY_KSUN=$apply_ksun"
+            echo "APPLY_BBRV3=$apply_bbrv3"
             echo "ARTIFACT_NAME=$artifact_name"
           } >> "$GITHUB_ENV"
 
@@ -179,11 +179,11 @@ jobs:
           if [ -n "${{ env.CUSTOM_LOCALVERSION }}" ]; then
             ARGS+=("--custom-localversion=${{ env.CUSTOM_LOCALVERSION }}")
           fi
-          if [ -n "${{ env.RESUKISU_SETUP_ARG }}" ]; then
-            ARGS+=("--resukisu-setup-arg=${{ env.RESUKISU_SETUP_ARG }}")
+          if [ -n "${{ env.KSUN_SETUP_ARG }}" ]; then
+            ARGS+=("--ksun-setup-arg=${{ env.KSUN_SETUP_ARG }}")
           fi
-          ARGS+=("--apply-susfs" "${{ env.APPLY_SUSFS }}")
-          ARGS+=("--apply-bbg" "${{ env.APPLY_BBG }}")
+          ARGS+=("--apply-ksun" "${{ env.APPLY_KSUN }}")
+          ARGS+=("--apply-bbrv3" "${{ env.APPLY_BBRV3 }}")
           ./kokuban_ci_core build "${ARGS[@]}"
 
       - name: Collect Build Artifacts
