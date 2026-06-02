@@ -31,10 +31,10 @@ Common local options:
   --clean               Remove untracked kernel source files before building
   --dry-run             Print the build plan without touching source or caches
   --force-lock          Remove an existing lock for this project before building
-  --with-susfs          Enable SuSFS (default)
-  --no-susfs            Disable SuSFS
-  --with-bbg            Enable Baseband Guard
-  --no-bbg              Disable Baseband Guard (default)
+  --with-ksun           Enable KSUN (default)
+  --no-ksun             Disable KSUN
+  --with-bbrv3          Enable BBRV3 (default)
+  --no-bbrv3            Disable BBRV3
 EOF
 }
 
@@ -87,30 +87,30 @@ normalize_local_args() {
   local args=()
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --with-susfs|--susfs)
-        args+=(--apply-susfs true)
+      --with-ksun|--ksun)
+        args+=(--apply-ksun true)
         ;;
-      --no-susfs)
-        args+=(--apply-susfs false)
+      --no-ksun)
+        args+=(--apply-ksun false)
         ;;
-      --susfs=*|--apply-susfs=*)
-        args+=(--apply-susfs "$(bool_value "${1#*=}")")
+      --ksun=*|--apply-ksun=*)
+        args+=(--apply-ksun "$(bool_value "${1#*=}")")
         ;;
-      --apply-susfs)
-        args+=(--apply-susfs "$(bool_value "${2:?Missing value for --apply-susfs}")")
+      --apply-ksun)
+        args+=(--apply-ksun "$(bool_value "${2:?Missing value for --apply-ksun}")")
         shift
         ;;
-      --with-bbg|--bbg)
-        args+=(--apply-bbg true)
+      --with-bbrv3|--bbrv3)
+        args+=(--apply-bbrv3 true)
         ;;
-      --no-bbg)
-        args+=(--apply-bbg false)
+      --no-bbrv3)
+        args+=(--apply-bbrv3 false)
         ;;
-      --bbg=*|--apply-bbg=*)
-        args+=(--apply-bbg "$(bool_value "${1#*=}")")
+      --bbrv3=*|--apply-bbrv3=*)
+        args+=(--apply-bbrv3 "$(bool_value "${1#*=}")")
         ;;
-      --apply-bbg)
-        args+=(--apply-bbg "$(bool_value "${2:?Missing value for --apply-bbg}")")
+      --apply-bbrv3)
+        args+=(--apply-bbrv3 "$(bool_value "${2:?Missing value for --apply-bbrv3}")")
         shift
         ;;
       *)
@@ -143,11 +143,11 @@ run_build() {
   local variant="default"
   shift
 
-  if [ "$#" -gt 0 ] && [[ "$1" != -* ]]; then
+  if [ "$#" -gt 0 ] && [ "$1" != -* ]; then
     branch="$1"
     shift
   fi
-  if [ "$#" -gt 0 ] && [[ "$1" != -* ]]; then
+  if [ "$#" -gt 0 ] && [ "$1" != -* ]; then
     variant="$1"
     shift
   fi
